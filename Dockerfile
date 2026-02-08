@@ -38,13 +38,29 @@ ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:install && pnpm ui:build
 
 
-# Runtime image
+# Runtime image (Node + Postgres 18 + pgvector)
 FROM node:22-bookworm
 ENV NODE_ENV=production
 
+# Install Postgres 18 + pgvector from PGDG
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    python3 \
+    python3-psycopg2 \
+  && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    postgresql-18 \
+    postgresql-client-18 \
+    postgresql-18-pgvector \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -62,8 +78,20 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
 
 COPY src ./src
 
+# Postgres defaults
+ENV POSTGRES_USER=postgres \
+  POSTGRES_PASSWORD=postgres \
+  POSTGRES_DB=postgres
+
+# Initialize pgvector extension on first boot
+
+# Start Postgres and the Node server
+COPY scripts/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+
 # The wrapper listens on this port.
 ENV OPENCLAW_PUBLIC_PORT=8080
 ENV PORT=8080
 EXPOSE 8080
-CMD ["node", "src/server.js"]
+EXPOSE 5432
+ENTRYPOINT ["/usr/local/bin/start.sh"]
