@@ -15,58 +15,66 @@ fi
 
 PG_VERSION=18
 PG_CLUSTER=main
-PG_CONF_DIR="/etc/postgresql/${PG_VERSION}/${PG_CLUSTER}"
-PG_DATA_DIR="/var/lib/postgresql/${PG_VERSION}/${PG_CLUSTER}"
+PG_DATA_DIR="${POSTGRES_DATA_DIR:-/data/postgres}"
 
 # Ensure data dir exists and is owned by postgres.
 mkdir -p "${PG_DATA_DIR}"
-chown -R postgres:postgres "/var/lib/postgresql/${PG_VERSION}"
+chown -R postgres:postgres "${PG_DATA_DIR}"
 
 # Create cluster if it doesn't exist.
-if ! pg_lsclusters | awk '$1 == "'"${PG_VERSION}"'" && $2 == "'"${PG_CLUSTER}"'" {found=1} END {exit !found}'; then
-  pg_createcluster "${PG_VERSION}" "${PG_CLUSTER}"
+if [ ! -f "${PG_DATA_DIR}/PG_VERSION" ]; then
+  su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/initdb -D \"${PG_DATA_DIR}\" --auth-local peer --auth-host scram-sha-256 --no-instructions"
 fi
 
 # Ensure Postgres listens on localhost.
-if [ -f "${PG_CONF_DIR}/postgresql.conf" ]; then
-  sed -i "s/^#\\?listen_addresses.*/listen_addresses = '127.0.0.1'/" "${PG_CONF_DIR}/postgresql.conf"
+if [ -f "${PG_DATA_DIR}/postgresql.conf" ]; then
+  sed -i "s/^#\\?listen_addresses.*/listen_addresses = '127.0.0.1'/" "${PG_DATA_DIR}/postgresql.conf"
 fi
 
 # Start Postgres in the background.
-pg_ctlcluster "${PG_VERSION}" "${PG_CLUSTER}" start
+su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"${PG_DATA_DIR}\" -w start"
 
 cleanup() {
-  pg_ctlcluster "${PG_VERSION}" "${PG_CLUSTER}" stop >/dev/null 2>&1 || true
+  su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"${PG_DATA_DIR}\" -w stop" >/dev/null 2>&1 || true
   kill -TERM "${node_pid:-}" "${watchdog_pid:-}" 2>/dev/null || true
   wait || true
 }
 trap cleanup INT TERM
 
 # Wait for Postgres to accept connections.
-until pg_isready -U postgres -d postgres >/dev/null 2>&1; do
+until su -s /bin/bash postgres -c "pg_isready -d postgres" >/dev/null 2>&1; do
   sleep 1
 done
 
-# Create role/db and set password.
-su -s /bin/bash postgres -c "psql -v user='${POSTGRES_USER}' -v pass='${POSTGRES_PASSWORD}' -v db='${POSTGRES_DB}' -d postgres <<'SQL'
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'user') THEN
-    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'user', :'pass');
-  ELSE
-    EXECUTE format('ALTER ROLE %I PASSWORD %L', :'user', :'pass');
-  END IF;
-END
-\$\$;
+sql_ident() {
+  printf "%s" "$1" | sed 's/"/""/g'
+}
+sql_literal() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+psql_exec() {
+  su -s /bin/bash postgres -c "psql -d postgres -v ON_ERROR_STOP=1 -c \"$1\"" >/dev/null 2>&1
+}
+psql_query() {
+  su -s /bin/bash postgres -c "psql -d postgres -tAc \"$1\"" 2>/dev/null
+}
 
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db') THEN
-    EXECUTE format('CREATE DATABASE %I OWNER %I', :'db', :'user');
-  END IF;
-END
-\$\$;
-SQL" >/dev/null 2>&1
+user_ident="$(sql_ident "${POSTGRES_USER}")"
+db_ident="$(sql_ident "${POSTGRES_DB}")"
+user_lit="$(sql_literal "${POSTGRES_USER}")"
+pass_lit="$(sql_literal "${POSTGRES_PASSWORD}")"
+db_lit="$(sql_literal "${POSTGRES_DB}")"
+
+# Create role/db and set password.
+if [ -z "$(psql_query "SELECT 1 FROM pg_roles WHERE rolname='${user_lit}'")" ]; then
+  psql_exec "CREATE ROLE \"${user_ident}\" LOGIN PASSWORD '${pass_lit}'"
+else
+  psql_exec "ALTER ROLE \"${user_ident}\" PASSWORD '${pass_lit}'"
+fi
+
+if [ -z "$(psql_query "SELECT 1 FROM pg_database WHERE datname='${db_lit}'")" ]; then
+  psql_exec "CREATE DATABASE \"${db_ident}\" OWNER \"${user_ident}\""
+fi
 
 # Ensure pgvector is enabled in the target DB.
 su -s /bin/bash postgres -c "psql -d \"${POSTGRES_DB}\" -c 'CREATE EXTENSION IF NOT EXISTS vector;'" >/dev/null 2>&1

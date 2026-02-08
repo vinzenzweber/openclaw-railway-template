@@ -37,9 +37,10 @@ Optional:
 - `OPENCLAW_GATEWAY_TOKEN` — if not set, the wrapper generates one (not ideal). In a template, set it using a generated secret.
 - `POSTGRES_USER` — defaults to `postgres`
 - `POSTGRES_DB` — defaults to `postgres`
+- `POSTGRES_DATA_DIR=/data/postgres` — override if you want a custom Postgres data path
 
 Notes:
-- The container includes **Postgres 18 + pgvector** and sets `DATABASE_URL` automatically if unset.
+- The container includes **Postgres 18 + pgvector**, stores data under `/data/postgres`, and sets `DATABASE_URL` automatically if unset.
 
 Notes:
 - This template pins OpenClaw to a known-good version by default via Docker build arg `OPENCLAW_GIT_REF`.
@@ -78,6 +79,7 @@ docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e SETUP_PASSWORD=test \
   -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DATA_DIR=/data/postgres \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
   -v $(pwd)/.tmpdata:/data \
