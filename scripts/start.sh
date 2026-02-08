@@ -43,7 +43,7 @@ cleanup() {
 trap cleanup INT TERM
 
 # Wait for Postgres to accept connections.
-until pg_isready -h localhost -U postgres -d postgres >/dev/null 2>&1; do
+until pg_isready -U postgres -d postgres >/dev/null 2>&1; do
   sleep 1
 done
 
