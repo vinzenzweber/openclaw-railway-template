@@ -27,6 +27,7 @@ In Railway Template Composer:
 
 Required:
 - `SETUP_PASSWORD` — user-provided password to access `/setup`
+- `POSTGRES_PASSWORD` — set in the template with a generated secret (users can override at install time)
 
 Recommended:
 - `OPENCLAW_STATE_DIR=/data/.openclaw`
@@ -34,6 +35,11 @@ Recommended:
 
 Optional:
 - `OPENCLAW_GATEWAY_TOKEN` — if not set, the wrapper generates one (not ideal). In a template, set it using a generated secret.
+- `POSTGRES_USER` — defaults to `postgres`
+- `POSTGRES_DB` — defaults to `postgres`
+
+Notes:
+- The container includes **Postgres 18 + pgvector** and sets `DATABASE_URL` automatically if unset.
 
 Notes:
 - This template pins OpenClaw to a known-good version by default via Docker build arg `OPENCLAW_GIT_REF`.
@@ -71,6 +77,7 @@ docker build -t openclaw-railway-template .
 docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e SETUP_PASSWORD=test \
+  -e POSTGRES_PASSWORD=secret \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
   -v $(pwd)/.tmpdata:/data \
