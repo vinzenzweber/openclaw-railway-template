@@ -85,26 +85,37 @@ RUN apt-get update \
     python3-psycopg2 \
     ffmpeg \
     gh \
-    golang-go \
-    cargo \
-    build-essential \
-    pkg-config \
-    libssl-dev \
     pipx \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry and uv via pipx, plus CLI bin paths
-ENV PATH="/root/.local/bin:/root/go/bin:/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.local/bin:/root/go/bin:/usr/local/go/bin:${PATH}"
 RUN pipx install poetry \
   && pipx install uv
 
 # Install OpenClaw skill CLIs via Linux-native package managers
 RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "$ARCH" in \
+      amd64) GOARCH=amd64; TOOLARCH=amd64; HIMALAYA_ARCH=x86_64 ;; \
+      arm64) GOARCH=arm64; TOOLARCH=arm64; HIMALAYA_ARCH=aarch64 ;; \
+      *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go1.22.12.linux-${GOARCH}.tar.gz" -o /tmp/go.tgz; \
+    rm -rf /usr/local/go; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm -f /tmp/go.tgz; \
+    go version; \
     go install github.com/steipete/wacli/cmd/wacli@latest; \
-    go install github.com/steipete/goplaces/cmd/goplaces@latest; \
-    go install github.com/steipete/gogcli/cmd/gog@latest; \
-    go install github.com/Yakitrak/notesmd-cli@latest; \
-    cargo install --locked himalaya; \
+    curl -fsSL "https://github.com/steipete/goplaces/releases/download/v0.2.1/goplaces_0.2.1_linux_${TOOLARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin goplaces; \
+    curl -fsSL "https://github.com/steipete/gogcli/releases/download/v0.9.0/gogcli_0.9.0_linux_${TOOLARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin gog; \
+    curl -fsSL "https://github.com/Yakitrak/notesmd-cli/releases/download/v0.3.0/notesmd-cli_0.3.0_linux_${TOOLARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin notesmd-cli; \
+    curl -fsSL "https://github.com/pimalaya/himalaya/releases/download/v1.1.0/himalaya.${HIMALAYA_ARCH}-linux.tgz" \
+      | tar -xz -C /usr/local/bin himalaya; \
+    npm install -g @steipete/summarize; \
     uv tool install nano-pdf; \
     uv tool install openai-whisper
 
@@ -114,6 +125,7 @@ RUN command -v gh \
   && command -v wacli \
   && command -v goplaces \
   && command -v gog \
+  && command -v summarize \
   && command -v notesmd-cli \
   && command -v himalaya \
   && command -v nano-pdf \
