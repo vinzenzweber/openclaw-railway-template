@@ -117,7 +117,7 @@ RUN set -eux; \
       | tar -xz -C /usr/local/bin himalaya; \
     npm install -g @steipete/summarize; \
     uv tool install nano-pdf; \
-    pipx install openai-whisper --pip-args='--no-deps'
+    uv tool install openai-whisper
 
 # Verify key CLIs are available
 RUN command -v gh \
