@@ -81,14 +81,45 @@ RUN apt-get update \
     lsb-release \
     python3 \
     python3-venv \
+    python3-pip \
     python3-psycopg2 \
+    ffmpeg \
+    gh \
+    golang-go \
+    cargo \
+    build-essential \
+    pkg-config \
+    libssl-dev \
     pipx \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry and uv via pipx
-ENV PATH="/root/.local/bin:${PATH}"
+# Install Poetry and uv via pipx, plus CLI bin paths
+ENV PATH="/root/.local/bin:/root/go/bin:/root/.cargo/bin:${PATH}"
 RUN pipx install poetry \
   && pipx install uv
+
+# Install OpenClaw skill CLIs via Linux-native package managers
+RUN set -eux; \
+    go install github.com/steipete/wacli/cmd/wacli@latest; \
+    go install github.com/steipete/goplaces/cmd/goplaces@latest; \
+    go install github.com/steipete/gogcli/cmd/gog@latest; \
+    go install github.com/Yakitrak/notesmd-cli@latest; \
+    cargo install --locked himalaya; \
+    uv tool install nano-pdf; \
+    uv tool install openai-whisper
+
+# Verify key CLIs are available
+RUN command -v gh \
+  && command -v ffmpeg \
+  && command -v wacli \
+  && command -v goplaces \
+  && command -v gog \
+  && command -v notesmd-cli \
+  && command -v himalaya \
+  && command -v nano-pdf \
+  && command -v whisper \
+  && whisper --help >/dev/null
+
 RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
   && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
