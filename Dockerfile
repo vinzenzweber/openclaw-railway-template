@@ -49,6 +49,9 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Playwright
+RUN npm install -g playwright
+
 # Install 1Password CLI (official APT repo + package signature policy)
 RUN set -eux; \
     ARCH="$(dpkg --print-architecture)"; \
