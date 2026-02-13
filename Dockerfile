@@ -42,6 +42,32 @@ RUN pnpm ui:install && pnpm ui:build
 FROM node:22-bookworm
 ENV NODE_ENV=production
 
+# Install Chromium
+RUN apt-get update && \
+    apt-get install -y chromium chromium-sandbox ca-certificates curl gnupg debsig-verify && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install 1Password CLI (official APT repo + package signature policy)
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg; \
+    echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/${ARCH} stable main" \
+      > /etc/apt/sources.list.d/1password.list; \
+    mkdir -p /etc/debsig/policies/AC2D62742012EA22; \
+    curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol \
+      -o /etc/debsig/policies/AC2D62742012EA22/1password.pol; \
+    mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22; \
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends 1password-cli; \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify installations
+RUN chromium --version && op --version
+
 # Install Postgres 18 + pgvector from PGDG
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -50,8 +76,15 @@ RUN apt-get update \
     gnupg \
     lsb-release \
     python3 \
+    python3-venv \
     python3-psycopg2 \
+    pipx \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry and uv via pipx
+ENV PATH="/root/.local/bin:${PATH}"
+RUN pipx install poetry \
+  && pipx install uv
 RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
   && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
