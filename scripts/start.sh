@@ -13,6 +13,37 @@ if [ -z "${DATABASE_URL:-}" ]; then
   export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
 fi
 
+# Start Chromium for OpenClaw browser attach mode.
+: "${CHROMIUM_CDP_HOST:=127.0.0.1}"
+: "${CHROMIUM_CDP_PORT:=18800}"
+: "${CHROMIUM_BIN:=chromium}"
+: "${CHROMIUM_USER_DATA_DIR:=/tmp/chromium-data}"
+: "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check}"
+export CHROMIUM_CDP_URL="http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
+
+mkdir -p "${CHROMIUM_USER_DATA_DIR}"
+chmod 700 "${CHROMIUM_USER_DATA_DIR}"
+
+"${CHROMIUM_BIN}" \
+  ${CHROMIUM_FLAGS} \
+  --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
+  --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
+  --user-data-dir="${CHROMIUM_USER_DATA_DIR}" \
+  about:blank >/tmp/chromium.log 2>&1 &
+chromium_pid=$!
+
+for _ in $(seq 1 30); do
+  if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
+  echo "Chromium CDP failed to start. Last log output:" >&2
+  tail -n 50 /tmp/chromium.log >&2 || true
+  exit 1
+fi
+
 PG_VERSION=18
 PG_CLUSTER=main
 PG_DATA_DIR="${POSTGRES_DATA_DIR:-/data/postgres}"
@@ -36,7 +67,7 @@ su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"$
 
 cleanup() {
   su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"${PG_DATA_DIR}\" -w stop" >/dev/null 2>&1 || true
-  kill -TERM "${node_pid:-}" "${watchdog_pid:-}" 2>/dev/null || true
+  kill -TERM "${node_pid:-}" "${chromium_pid:-}" "${watchdog_pid:-}" 2>/dev/null || true
   wait || true
 }
 trap cleanup INT TERM
