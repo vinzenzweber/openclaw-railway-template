@@ -38,11 +38,11 @@ Optional:
 - `POSTGRES_USER` — defaults to `postgres`
 - `POSTGRES_DB` — defaults to `postgres`
 - `POSTGRES_DATA_DIR=/data/postgres` — override if you want a custom Postgres data path
-- `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` — set this to use a dedicated Chromium service (example: `http://chromium-cdp.railway.internal:18800`)
+- `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` — CDP endpoint for the dedicated Chromium service (example: `http://chromium-cdp.railway.internal:8080`)
 
 Notes:
 - The container includes **Postgres 18 + pgvector**, stores data under `/data/postgres`, and sets `DATABASE_URL` automatically if unset.
-- Chromium usage: by default this template starts Chromium locally for browser-based tools. Set `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` to move browser execution to a dedicated Chromium service, which is the recommended setup on Railway when you want persistent browser state across frequent deploys.
+- Chromium usage: this template expects a dedicated `chromium-cdp` service. Configure `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` so OpenClaw can attach via CDP.
 
 Notes:
 - This template pins OpenClaw to a released version by default via Docker build arg `OPENCLAW_GIT_REF` (override if you want `main`).
@@ -87,9 +87,9 @@ Suggested setup:
 1. Create a second Railway service in the same project/environment (for monorepos, set root dir to `/services/chromium`).
 2. For that service, set `RAILWAY_DOCKERFILE_PATH=services/chromium/Dockerfile`.
 3. Mount a volume at `/data` on the Chromium service for persistent browser profile state.
-4. Set Chromium service `PORT=18800` and healthcheck path to `/json/version`.
+4. Keep the Chromium service on Railway's default `PORT` (typically `8080`) and keep its healthcheck path configured in `services/chromium/railway.toml`.
 5. In the OpenClaw service, set:
-   - `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL=http://<chromium-service-name>.railway.internal:18800`
+   - `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL=http://<chromium-service-name>.railway.internal:8080`
 
 When `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` is set, the wrapper skips local Chromium startup and uses the external CDP endpoint.
 

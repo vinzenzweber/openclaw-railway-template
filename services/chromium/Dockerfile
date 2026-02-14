@@ -6,13 +6,10 @@ RUN apt-get update \
     chromium-sandbox \
     ca-certificates \
     curl \
-    socat \
+    nginx-light \
   && rm -rf /var/lib/apt/lists/*
 
 COPY services/chromium/start.sh /usr/local/bin/start-chromium.sh
 RUN chmod +x /usr/local/bin/start-chromium.sh
-
-ENV PORT=18800
-EXPOSE 18800
 
 ENTRYPOINT ["/usr/local/bin/start-chromium.sh"]

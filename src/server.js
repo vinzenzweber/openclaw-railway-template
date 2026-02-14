@@ -145,9 +145,63 @@ let lastGatewayError = null;
 let lastGatewayExit = null;
 let lastDoctorOutput = null;
 let lastDoctorAt = null;
+let lastBrowserProbeOutput = null;
+let lastBrowserProbeAt = null;
+
+function safeStat(p) {
+  try {
+    const st = fs.statSync(p);
+    return {
+      exists: true,
+      mode: `0o${(st.mode & 0o777).toString(8)}`,
+      isFile: st.isFile(),
+      isSymlink: st.isSymbolicLink(),
+      uid: st.uid,
+      gid: st.gid,
+      size: st.size,
+    };
+  } catch (e) {
+    return { exists: false, error: String(e?.message || e) };
+  }
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function probeTcp(host, port, timeoutMs = 750) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.setTimeout(timeoutMs);
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on("error", () => resolve(false));
+  });
+}
+
+async function probeTcpAny(hosts, port, timeoutMs = 750) {
+  for (const h of hosts) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await probeTcp(h, port, timeoutMs);
+    if (ok) return true;
+  }
+  return false;
+}
+
+async function probeGateway() {
+  // The gateway may require auth for HTTP routes; a TCP accept is enough to know it's up.
+  return probeTcpAny([INTERNAL_GATEWAY_HOST, "::1"], INTERNAL_GATEWAY_PORT, 750);
+}
+
+function browserControlPort() {
+  // OpenClaw derives the browser-control port from the gateway port (see CLI --dev description).
+  // Default gateway is 18789 => browser-control is typically 18791.
+  return Number.parseInt(process.env.BROWSER_CONTROL_PORT ?? String(INTERNAL_GATEWAY_PORT + 2), 10);
 }
 
 async function waitForGatewayReady(opts = {}) {
@@ -191,6 +245,64 @@ async function waitForGatewayReady(opts = {}) {
     await sleep(250);
   }
   return false;
+}
+
+async function probeBrowserSubsystemBestEffort() {
+  const now = Date.now();
+  if (lastBrowserProbeAt && now - lastBrowserProbeAt < 30_000) return;
+  lastBrowserProbeAt = now;
+
+  // Retry a few times because the gateway can come up before all subsystems are ready.
+  for (let i = 0; i < 5; i += 1) {
+    const already = await probeTcpAny(
+      [INTERNAL_GATEWAY_HOST, "::1"],
+      browserControlPort(),
+      350,
+    );
+    if (already) {
+      lastBrowserProbeOutput = "[browser] control port already accepting connections";
+      return;
+    }
+
+    // `browser status` is a safe way to force initialization without trying to launch a local
+    // Chromium instance (which we intentionally don't include in this service).
+    const r = await runCmd(
+      OPENCLAW_BIN,
+      clawArgs([
+        "browser",
+        "status",
+        "--url",
+        `ws://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`,
+        "--token",
+        OPENCLAW_GATEWAY_TOKEN,
+      ]),
+    );
+    const out = redactSecrets(r.output || "");
+    lastBrowserProbeOutput =
+      out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
+
+    // If we managed to bring up the control port, stop retrying.
+    const ok = await probeTcpAny([INTERNAL_GATEWAY_HOST, "::1"], browserControlPort(), 350);
+    if (ok) return;
+
+    await sleep(750);
+  }
+}
+
+async function detectChromiumOnDisk() {
+  const p = "/usr/bin/chromium";
+  let whichOut = null;
+  try {
+    const r = await runCmd("sh", ["-lc", "command -v chromium || true"]);
+    whichOut = (r.output || "").trim() || null;
+  } catch {
+    // ignore
+  }
+  return {
+    expectedPath: p,
+    stat: safeStat(p),
+    which: whichOut,
+  };
 }
 
 async function startGateway() {
@@ -264,6 +376,10 @@ async function ensureGatewayRunning() {
         if (!ready) {
           throw new Error("Gateway did not become ready in time");
         }
+
+        // Best-effort: initialize/probe the browser subsystem so the browser-control service
+        // (derived port, typically 18791) comes up in headless/container environments.
+        await probeBrowserSubsystemBestEffort();
       } catch (err) {
         const msg = `[gateway] start failure: ${String(err)}`;
         lastGatewayError = msg;
@@ -328,11 +444,28 @@ app.get("/setup/healthz", (_req, res) => res.json({ ok: true }));
 // Keep this free of secrets.
 app.get("/healthz", async (_req, res) => {
   let gatewayReachable = false;
+  let browserControlReachable = false;
+  let chromium = null;
   if (isConfigured()) {
     try {
       gatewayReachable = await probeGateway();
     } catch {
       gatewayReachable = false;
+    }
+    try {
+      browserControlReachable = await probeTcpAny(
+        [INTERNAL_GATEWAY_HOST, "::1"],
+        browserControlPort(),
+        750,
+      );
+    } catch {
+      browserControlReachable = false;
+    }
+
+    try {
+      chromium = await detectChromiumOnDisk();
+    } catch (e) {
+      chromium = { error: String(e?.message || e) };
     }
   }
 
@@ -349,6 +482,13 @@ app.get("/healthz", async (_req, res) => {
       lastError: lastGatewayError,
       lastExit: lastGatewayExit,
       lastDoctorAt,
+    },
+    browser: {
+      controlPort: browserControlPort(),
+      controlPortReachable: browserControlReachable,
+      lastProbeAt: lastBrowserProbeAt,
+      lastProbeOutput: lastBrowserProbeOutput,
+      chromium,
     },
   });
 });
@@ -715,6 +855,20 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
     await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.bind", "loopback"]));
     await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+
+    // If an external Chromium CDP URL is provided, configure OpenClaw's browser subsystem
+    // to attach to it (and avoid trying to launch a local browser).
+    const externalCdpUrl = process.env.OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL?.trim();
+    if (externalCdpUrl) {
+      await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "browser.enabled", "true", "--json"]));
+      await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "browser.attachOnly", "true", "--json"]));
+      // Create/update a remote profile using OpenClaw's helper (ensures correct schema fields).
+      await runCmd(
+        OPENCLAW_BIN,
+        clawArgs(["browser", "create-profile", "--name", "remote", "--cdp-url", externalCdpUrl, "--driver", "openclaw"]),
+      );
+      await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "browser.defaultProfile", "remote"]));
+    }
 
     // Optional: configure a custom OpenAI-compatible provider (base URL) for advanced users.
     if (payload.customProviderId?.trim() && payload.customProviderBaseUrl?.trim()) {
