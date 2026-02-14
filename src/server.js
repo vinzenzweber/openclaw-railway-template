@@ -184,9 +184,18 @@ async function probeTcp(host, port, timeoutMs = 750) {
   });
 }
 
+async function probeTcpAny(hosts, port, timeoutMs = 750) {
+  for (const h of hosts) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await probeTcp(h, port, timeoutMs);
+    if (ok) return true;
+  }
+  return false;
+}
+
 async function probeGateway() {
   // The gateway may require auth for HTTP routes; a TCP accept is enough to know it's up.
-  return probeTcp(INTERNAL_GATEWAY_HOST, INTERNAL_GATEWAY_PORT, 750);
+  return probeTcpAny([INTERNAL_GATEWAY_HOST, "::1"], INTERNAL_GATEWAY_PORT, 750);
 }
 
 function browserControlPort() {
@@ -245,7 +254,11 @@ async function probeBrowserSubsystemBestEffort() {
 
   // Retry a few times because the gateway can come up before all subsystems are ready.
   for (let i = 0; i < 5; i += 1) {
-    const already = await probeTcp(INTERNAL_GATEWAY_HOST, browserControlPort(), 350);
+    const already = await probeTcpAny(
+      [INTERNAL_GATEWAY_HOST, "::1"],
+      browserControlPort(),
+      350,
+    );
     if (already) {
       lastBrowserProbeOutput = "[browser] control port already accepting connections";
       return;
@@ -269,7 +282,7 @@ async function probeBrowserSubsystemBestEffort() {
       out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
 
     // If we managed to bring up the control port, stop retrying.
-    const ok = await probeTcp(INTERNAL_GATEWAY_HOST, browserControlPort(), 350);
+    const ok = await probeTcpAny([INTERNAL_GATEWAY_HOST, "::1"], browserControlPort(), 350);
     if (ok) return;
 
     await sleep(750);
@@ -440,8 +453,8 @@ app.get("/healthz", async (_req, res) => {
       gatewayReachable = false;
     }
     try {
-      browserControlReachable = await probeTcp(
-        INTERNAL_GATEWAY_HOST,
+      browserControlReachable = await probeTcpAny(
+        [INTERNAL_GATEWAY_HOST, "::1"],
         browserControlPort(),
         750,
       );
@@ -451,8 +464,8 @@ app.get("/healthz", async (_req, res) => {
 
     try {
       chromium = await detectChromiumOnDisk();
-    } catch {
-      chromium = null;
+    } catch (e) {
+      chromium = { error: String(e?.message || e) };
     }
   }
 
