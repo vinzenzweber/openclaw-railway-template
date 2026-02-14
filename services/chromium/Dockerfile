@@ -1,10 +1,11 @@
-FROM node:22-bookworm
+FROM debian:bookworm-slim
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     chromium \
     chromium-sandbox \
     ca-certificates \
+    curl \
     socat \
   && rm -rf /var/lib/apt/lists/*
 
