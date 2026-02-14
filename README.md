@@ -76,22 +76,7 @@ Then:
 
 ### Recommended: dedicated Chromium service
 
-If Chromium profile locking appears during rolling deploys, run Chromium in a separate Railway service.
-
-This repo includes:
-- `services/chromium/Dockerfile`
-- `services/chromium/start.sh`
-- `services/chromium/railway.toml`
-
-Suggested setup:
-1. Create a second Railway service in the same project/environment (for monorepos, set root dir to `/services/chromium`).
-2. For that service, set `RAILWAY_DOCKERFILE_PATH=services/chromium/Dockerfile`.
-3. Mount a volume at `/data` on the Chromium service for persistent browser profile state.
-4. Keep the Chromium service on Railway's default `PORT` (typically `8080`) and keep its healthcheck path configured in `services/chromium/railway.toml`.
-5. In the OpenClaw service, set:
-   - `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL=http://<chromium-service-name>.railway.internal:8080`
-
-When `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` is set, the wrapper skips local Chromium startup and uses the external CDP endpoint.
+For reliable browser automation on Railway (and to avoid Chromium profile-lock issues during rolling deploys), run Chromium as a separate `chromium-cdp` service (using `services/chromium/*`) with a volume mounted at `/data`, then point OpenClaw at it via `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL=http://chromium-cdp.railway.internal:8080`.
 
 Official Railway references:
 - Private networking (`<service>.railway.internal`): <https://docs.railway.com/guides/private-networking>
