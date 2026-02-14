@@ -17,15 +17,23 @@ fi
 : "${CHROMIUM_CDP_HOST:=127.0.0.1}"
 : "${CHROMIUM_CDP_PORT:=18800}"
 : "${CHROMIUM_BIN:=chromium}"
-: "${CHROMIUM_USER_DATA_DIR:=/tmp/chromium-data}"
-: "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check}"
+: "${CHROMIUM_USER_DATA_DIR:=/data/chromium-user-data}"
+: "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process}"
 export CHROMIUM_CDP_URL="http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
 
 mkdir -p "${CHROMIUM_USER_DATA_DIR}"
 chmod 700 "${CHROMIUM_USER_DATA_DIR}"
 
+# Allow operators to append custom flags without replacing defaults.
+if [ -n "${CHROMIUM_EXTRA_FLAGS:-}" ]; then
+  CHROMIUM_FLAGS="${CHROMIUM_FLAGS} ${CHROMIUM_EXTRA_FLAGS}"
+fi
+
+# Split configured flags into args safely.
+read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
+
 "${CHROMIUM_BIN}" \
-  ${CHROMIUM_FLAGS} \
+  "${chromium_args[@]}" \
   --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
   --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
   --user-data-dir="${CHROMIUM_USER_DATA_DIR}" \
