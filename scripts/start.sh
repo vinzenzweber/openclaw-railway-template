@@ -13,72 +13,30 @@ if [ -z "${DATABASE_URL:-}" ]; then
   export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
 fi
 
-# Start Chromium for OpenClaw browser attach mode.
-: "${CHROMIUM_CDP_HOST:=127.0.0.1}"
-: "${CHROMIUM_CDP_PORT:=18800}"
-: "${CHROMIUM_BIN:=chromium}"
-: "${CHROMIUM_USER_DATA_DIR:=/tmp/chromium-data}"
-: "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process}"
-export CHROMIUM_CDP_URL="http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
+# Persist OpenClaw state/workspace on the volume by default.
+: "${OPENCLAW_STATE_DIR:=/data/.openclaw}"
+: "${OPENCLAW_WORKSPACE_DIR:=/data/workspace}"
 
-# If using a dedicated Chromium service, skip local browser launch and point to external CDP.
+# This template requires a dedicated Chromium service (CDP) to be configured.
 if [ -n "${OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL:-}" ]; then
   export CHROMIUM_CDP_URL="${OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL}"
-else
-  mkdir -p "${CHROMIUM_USER_DATA_DIR}"
-  chmod 700 "${CHROMIUM_USER_DATA_DIR}"
 
-  # Allow operators to append custom flags without replacing defaults.
-  if [ -n "${CHROMIUM_EXTRA_FLAGS:-}" ]; then
-    CHROMIUM_FLAGS="${CHROMIUM_FLAGS} ${CHROMIUM_EXTRA_FLAGS}"
-  fi
-
-  # Split configured flags into args safely.
-  read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
-
-  start_chromium() {
-    local user_data_dir="$1"
-    mkdir -p "${user_data_dir}"
-    chmod 700 "${user_data_dir}"
-    rm -f \
-      "${user_data_dir}/SingletonLock" \
-      "${user_data_dir}/SingletonCookie" \
-      "${user_data_dir}/SingletonSocket"
-
-    "${CHROMIUM_BIN}" \
-      "${chromium_args[@]}" \
-      --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
-      --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
-      --user-data-dir="${user_data_dir}" \
-      about:blank >/tmp/chromium.log 2>&1 &
-    chromium_pid=$!
-  }
-
-  wait_for_cdp() {
-    for _ in $(seq 1 30); do
-      if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
-        return 0
-      fi
-      sleep 1
-    done
-    return 1
-  }
-
-  start_chromium "${CHROMIUM_USER_DATA_DIR}"
-  if ! wait_for_cdp; then
-    if grep -qi "profile appears to be in use" /tmp/chromium.log 2>/dev/null; then
-      kill -TERM "${chromium_pid:-}" 2>/dev/null || true
-      wait "${chromium_pid:-}" 2>/dev/null || true
-      CHROMIUM_USER_DATA_DIR="/tmp/chromium-data-ephemeral-$$"
-      start_chromium "${CHROMIUM_USER_DATA_DIR}"
+  # Pre-seed OpenClaw config (if it exists) so the gateway/browser service knows to use the
+  # external CDP endpoint and never tries to launch a local browser.
+  #
+  # This is best-effort: first deploys might not have a config yet (before /setup).
+  if command -v openclaw >/dev/null 2>&1; then
+    if [ -f "${OPENCLAW_STATE_DIR}/openclaw.json" ] || [ -f "${OPENCLAW_STATE_DIR}/clawdbot.json" ] || [ -f "${OPENCLAW_STATE_DIR}/moltbot.json" ]; then
+      openclaw config set browser.enabled true --json >/dev/null 2>&1 || true
+      openclaw config set browser.attachOnly true --json >/dev/null 2>&1 || true
+      openclaw config set browser.defaultProfile remote >/dev/null 2>&1 || true
+      # Note: value is a raw string (not JSON) so we don't need --json.
+      openclaw config set browser.profiles.remote.cdpUrl "${CHROMIUM_CDP_URL}" >/dev/null 2>&1 || true
     fi
   fi
-
-  if ! wait_for_cdp; then
-    echo "Chromium CDP failed to start. Last log output:" >&2
-    tail -n 50 /tmp/chromium.log >&2 || true
-    exit 1
-  fi
+else
+  echo "error: OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL is not set. This deployment expects a dedicated chromium-cdp service." >&2
+  exit 1
 fi
 
 PG_VERSION=18
@@ -104,7 +62,7 @@ su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"$
 
 cleanup() {
   su -s /bin/bash postgres -c "/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl -D \"${PG_DATA_DIR}\" -w stop" >/dev/null 2>&1 || true
-  kill -TERM "${node_pid:-}" "${chromium_pid:-}" "${watchdog_pid:-}" 2>/dev/null || true
+  kill -TERM "${node_pid:-}" "${watchdog_pid:-}" 2>/dev/null || true
   wait || true
 }
 trap cleanup INT TERM

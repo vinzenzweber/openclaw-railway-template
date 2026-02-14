@@ -2,20 +2,34 @@
 FROM node:22-bookworm
 ENV NODE_ENV=production
 
-# Install Chromium
-RUN apt-get update && \
-    apt-get install -y chromium chromium-sandbox ca-certificates curl gnupg debsig-verify && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Base OS tooling used by subsequent install steps
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    debsig-verify \
+  && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright
-RUN npm install -g playwright
+# OpenClaw's browser subsystem expects a Chromium executable path to exist even when
+# connecting to an external CDP endpoint (attach-only). Provide a tiny shim so
+# browser-control can initialize without installing full Chromium here.
+RUN if [ ! -x /usr/bin/chromium ]; then \
+      printf '%s\n' '#!/bin/sh' 'echo "Chromium 0.0.0.0"' 'exit 0' > /usr/bin/chromium; \
+      chmod +x /usr/bin/chromium; \
+    fi
 
 # Install OpenClaw (official npm distribution)
 # Pin this to a specific version in Railway via build arg if you want deterministic builds.
 ARG OPENCLAW_NPM_VERSION=latest
 RUN npm install -g "openclaw@${OPENCLAW_NPM_VERSION}" \
   && openclaw --version
+
+# OpenClaw's browser-control service uses Playwright on top of CDP. We only need the
+# Node package here (we connect to an external Chromium CDP service), so skip downloading
+# Playwright-managed browser binaries to keep the image smaller.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN npm install -g playwright
 
 # Install 1Password CLI (official APT repo + package signature policy)
 RUN set -eux; \
@@ -35,14 +49,11 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # Verify installations
-RUN chromium --version && op --version
+RUN op --version
 
 # Install Postgres 18 + pgvector from PGDG
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gnupg \
     lsb-release \
     python3 \
     python3-venv \
