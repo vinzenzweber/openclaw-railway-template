@@ -21,59 +21,64 @@ fi
 : "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process}"
 export CHROMIUM_CDP_URL="http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
 
-mkdir -p "${CHROMIUM_USER_DATA_DIR}"
-chmod 700 "${CHROMIUM_USER_DATA_DIR}"
+# If using a dedicated Chromium service, skip local browser launch and point to external CDP.
+if [ -n "${OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL:-}" ]; then
+  export CHROMIUM_CDP_URL="${OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL}"
+else
+  mkdir -p "${CHROMIUM_USER_DATA_DIR}"
+  chmod 700 "${CHROMIUM_USER_DATA_DIR}"
 
-# Allow operators to append custom flags without replacing defaults.
-if [ -n "${CHROMIUM_EXTRA_FLAGS:-}" ]; then
-  CHROMIUM_FLAGS="${CHROMIUM_FLAGS} ${CHROMIUM_EXTRA_FLAGS}"
-fi
-
-# Split configured flags into args safely.
-read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
-
-start_chromium() {
-  local user_data_dir="$1"
-  mkdir -p "${user_data_dir}"
-  chmod 700 "${user_data_dir}"
-  rm -f \
-    "${user_data_dir}/SingletonLock" \
-    "${user_data_dir}/SingletonCookie" \
-    "${user_data_dir}/SingletonSocket"
-
-  "${CHROMIUM_BIN}" \
-    "${chromium_args[@]}" \
-    --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
-    --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
-    --user-data-dir="${user_data_dir}" \
-    about:blank >/tmp/chromium.log 2>&1 &
-  chromium_pid=$!
-}
-
-wait_for_cdp() {
-  for _ in $(seq 1 30); do
-    if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-start_chromium "${CHROMIUM_USER_DATA_DIR}"
-if ! wait_for_cdp; then
-  if grep -qi "profile appears to be in use" /tmp/chromium.log 2>/dev/null; then
-    kill -TERM "${chromium_pid:-}" 2>/dev/null || true
-    wait "${chromium_pid:-}" 2>/dev/null || true
-    CHROMIUM_USER_DATA_DIR="/tmp/chromium-data-ephemeral-$$"
-    start_chromium "${CHROMIUM_USER_DATA_DIR}"
+  # Allow operators to append custom flags without replacing defaults.
+  if [ -n "${CHROMIUM_EXTRA_FLAGS:-}" ]; then
+    CHROMIUM_FLAGS="${CHROMIUM_FLAGS} ${CHROMIUM_EXTRA_FLAGS}"
   fi
-fi
 
-if ! wait_for_cdp; then
-  echo "Chromium CDP failed to start. Last log output:" >&2
-  tail -n 50 /tmp/chromium.log >&2 || true
-  exit 1
+  # Split configured flags into args safely.
+  read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
+
+  start_chromium() {
+    local user_data_dir="$1"
+    mkdir -p "${user_data_dir}"
+    chmod 700 "${user_data_dir}"
+    rm -f \
+      "${user_data_dir}/SingletonLock" \
+      "${user_data_dir}/SingletonCookie" \
+      "${user_data_dir}/SingletonSocket"
+
+    "${CHROMIUM_BIN}" \
+      "${chromium_args[@]}" \
+      --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
+      --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
+      --user-data-dir="${user_data_dir}" \
+      about:blank >/tmp/chromium.log 2>&1 &
+    chromium_pid=$!
+  }
+
+  wait_for_cdp() {
+    for _ in $(seq 1 30); do
+      if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 1
+    done
+    return 1
+  }
+
+  start_chromium "${CHROMIUM_USER_DATA_DIR}"
+  if ! wait_for_cdp; then
+    if grep -qi "profile appears to be in use" /tmp/chromium.log 2>/dev/null; then
+      kill -TERM "${chromium_pid:-}" 2>/dev/null || true
+      wait "${chromium_pid:-}" 2>/dev/null || true
+      CHROMIUM_USER_DATA_DIR="/tmp/chromium-data-ephemeral-$$"
+      start_chromium "${CHROMIUM_USER_DATA_DIR}"
+    fi
+  fi
+
+  if ! wait_for_cdp; then
+    echo "Chromium CDP failed to start. Last log output:" >&2
+    tail -n 50 /tmp/chromium.log >&2 || true
+    exit 1
+  fi
 fi
 
 PG_VERSION=18

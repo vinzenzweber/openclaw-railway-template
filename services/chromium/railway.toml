@@ -1,0 +1,15 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "services/chromium/Dockerfile"
+
+[deploy]
+healthcheckPath = "/json/version"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+# Avoid rolling overlap for the CDP service when using a persistent profile volume.
+overlapSeconds = 0
+# Require the volume mount for persistent browser state.
+requiredMountPath = "/data"
+
+[variables]
+PORT = "18800"

@@ -97,12 +97,11 @@ const GATEWAY_READY_TIMEOUT_MS = Number.parseInt(
 );
 const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 
-// Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
-const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
-const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+// Prefer the installed CLI binary. This avoids building OpenClaw from source in the image.
+const OPENCLAW_BIN = process.env.OPENCLAW_BIN?.trim() || "openclaw";
 
 function clawArgs(args) {
-  return [OPENCLAW_ENTRY, ...args];
+  return args;
 }
 
 function resolveConfigCandidates() {
@@ -214,7 +213,7 @@ async function startGateway() {
     OPENCLAW_GATEWAY_TOKEN,
   ];
 
-  gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
+  gatewayProc = childProcess.spawn(OPENCLAW_BIN, clawArgs(args), {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -245,7 +244,7 @@ async function runDoctorBestEffort() {
   lastDoctorAt = now;
 
   try {
-    const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+    const r = await runCmd(OPENCLAW_BIN, clawArgs(["doctor"]));
     const out = redactSecrets(r.output || "");
     lastDoctorOutput = out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
   } catch (err) {
@@ -527,8 +526,8 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 });
 
 app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
-  const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
-  const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+  const version = await runCmd(OPENCLAW_BIN, clawArgs(["--version"]));
+  const channelsHelp = await runCmd(OPENCLAW_BIN, clawArgs(["channels", "add", "--help"]));
 
   // We reuse OpenClaw's own auth-choice grouping logic indirectly by hardcoding the same group defs.
   // This is intentionally minimal; later we can parse the CLI help output to stay perfectly in sync.
@@ -699,7 +698,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       return res.status(400).json({ ok: false, output: `Setup input error: ${String(err)}` });
     }
 
-    const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
+    const onboard = await runCmd(OPENCLAW_BIN, clawArgs(onboardArgs));
 
   let extra = "";
 
@@ -711,11 +710,11 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     // (We also enforce loopback bind since the wrapper proxies externally.)
     // IMPORTANT: Set both gateway.auth.token (server-side) and gateway.remote.token (client-side)
     // to the same value so the Control UI can connect without "token mismatch" errors.
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.mode", "token"]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+    await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.auth.mode", "token"]));
+    await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
+    await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
+    await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.bind", "loopback"]));
+    await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
     // Optional: configure a custom OpenAI-compatible provider (base URL) for advanced users.
     if (payload.customProviderId?.trim() && payload.customProviderBaseUrl?.trim()) {
@@ -742,16 +741,16 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         };
 
         // Ensure we merge in this provider rather than replacing other providers.
-        await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "models.mode", "merge"]));
+        await runCmd(OPENCLAW_BIN, clawArgs(["config", "set", "models.mode", "merge"]));
         const set = await runCmd(
-          OPENCLAW_NODE,
+          OPENCLAW_BIN,
           clawArgs(["config", "set", "--json", `models.providers.${providerId}`, JSON.stringify(providerCfg)]),
         );
         extra += `\n[custom provider] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
       }
     }
 
-    const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+    const channelsHelp = await runCmd(OPENCLAW_BIN, clawArgs(["channels", "add", "--help"]));
     const helpText = channelsHelp.output || "";
 
     const supports = (name) => helpText.includes(name);
@@ -770,10 +769,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           streamMode: "partial",
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          OPENCLAW_BIN,
           clawArgs(["config", "set", "--json", "channels.telegram", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.telegram"]));
+        const get = await runCmd(OPENCLAW_BIN, clawArgs(["config", "get", "channels.telegram"]));
         extra += `\n[telegram config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[telegram verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -793,10 +792,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           },
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          OPENCLAW_BIN,
           clawArgs(["config", "set", "--json", "channels.discord", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.discord"]));
+        const get = await runCmd(OPENCLAW_BIN, clawArgs(["config", "get", "channels.discord"]));
         extra += `\n[discord config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[discord verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -812,10 +811,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           appToken: payload.slackAppToken?.trim() || undefined,
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          OPENCLAW_BIN,
           clawArgs(["config", "set", "--json", "channels.slack", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.slack"]));
+        const get = await runCmd(OPENCLAW_BIN, clawArgs(["config", "get", "channels.slack"]));
         extra += `\n[slack config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[slack verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -836,8 +835,8 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 });
 
 app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
-  const v = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
-  const help = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+  const v = await runCmd(OPENCLAW_BIN, clawArgs(["--version"]));
+  const help = await runCmd(OPENCLAW_BIN, clawArgs(["channels", "add", "--help"]));
 
   res.json({
     wrapper: {
@@ -861,8 +860,7 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       railwayCommit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     },
     openclaw: {
-      entry: OPENCLAW_ENTRY,
-      node: OPENCLAW_NODE,
+      bin: OPENCLAW_BIN,
       version: v.output.trim(),
       channelsAddHelpIncludesTelegram: help.output.includes("telegram"),
     },
@@ -942,35 +940,35 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
     }
 
     if (cmd === "openclaw.version") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["--version"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.status") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["status"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["status"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.health") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["health"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["health"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.doctor") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["doctor"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.logs.tail") {
       const lines = Math.max(50, Math.min(1000, Number.parseInt(arg || "200", 10) || 200));
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["logs", "--tail", String(lines)]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["logs", "--tail", String(lines)]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.config.get") {
       if (!arg) return res.status(400).json({ ok: false, error: "Missing config path" });
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", arg]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["config", "get", arg]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
     // Device management commands (for fixing "disconnected (1008): pairing required")
     if (cmd === "openclaw.devices.list") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["devices", "list"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.devices.approve") {
@@ -981,20 +979,20 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_-]+$/.test(requestId)) {
         return res.status(400).json({ ok: false, error: "Invalid device request ID" });
       }
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["devices", "approve", requestId]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
     // Plugin management commands
     if (cmd === "openclaw.plugins.list") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "list"]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["plugins", "list"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.plugins.enable") {
       const name = String(arg || "").trim();
       if (!name) return res.status(400).json({ ok: false, error: "Missing plugin name" });
       if (!/^[A-Za-z0-9_-]+$/.test(name)) return res.status(400).json({ ok: false, error: "Invalid plugin name" });
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", name]));
+      const r = await runCmd(OPENCLAW_BIN, clawArgs(["plugins", "enable", name]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
@@ -1049,13 +1047,13 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
   if (!channel || !code) {
     return res.status(400).json({ ok: false, error: "Missing channel or code" });
   }
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "approve", String(channel), String(code)]));
+  const r = await runCmd(OPENCLAW_BIN, clawArgs(["pairing", "approve", String(channel), String(code)]));
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: r.output });
 });
 
 // Device pairing helper (list + approve) to avoid needing SSH.
 app.get("/setup/api/devices/pending", requireSetupAuth, async (_req, res) => {
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
+  const r = await runCmd(OPENCLAW_BIN, clawArgs(["devices", "list"]));
   const output = redactSecrets(r.output);
   const requestIds = extractDeviceRequestIds(output);
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, requestIds, output });
@@ -1065,7 +1063,7 @@ app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
   const requestId = String((req.body && req.body.requestId) || "").trim();
   if (!requestId) return res.status(400).json({ ok: false, error: "Missing device request ID" });
   if (!/^[A-Za-z0-9_-]+$/.test(requestId)) return res.status(400).json({ ok: false, error: "Invalid device request ID" });
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
+  const r = await runCmd(OPENCLAW_BIN, clawArgs(["devices", "approve", requestId]));
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
 });
 

@@ -1,0 +1,26 @@
+# Keep build context small and deterministic.
+.git
+.gitignore
+.DS_Store
+
+# Local/runtime artifacts
+.tmpdata
+tmp
+temp
+*.log
+*.pid
+
+# Node artifacts
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor/IDE
+.vscode
+.idea
+
+# Repo docs/assets not needed at image build time
+memory
+logs*

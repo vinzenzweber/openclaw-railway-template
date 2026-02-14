@@ -38,9 +38,11 @@ Optional:
 - `POSTGRES_USER` — defaults to `postgres`
 - `POSTGRES_DB` — defaults to `postgres`
 - `POSTGRES_DATA_DIR=/data/postgres` — override if you want a custom Postgres data path
+- `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` — set this to use a dedicated Chromium service (example: `http://chromium-cdp.railway.internal:18800`)
 
 Notes:
 - The container includes **Postgres 18 + pgvector**, stores data under `/data/postgres`, and sets `DATABASE_URL` automatically if unset.
+- Chromium usage: by default this template starts Chromium locally for browser-based tools. Set `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` to move browser execution to a dedicated Chromium service, which is the recommended setup on Railway when you want persistent browser state across frequent deploys.
 
 Notes:
 - This template pins OpenClaw to a released version by default via Docker build arg `OPENCLAW_GIT_REF` (override if you want `main`).
@@ -71,6 +73,31 @@ Then:
 5) Invite the bot to your server (OAuth2 URL Generator → scopes: `bot`, `applications.commands`; then choose permissions)
 
 ## Troubleshooting
+
+### Recommended: dedicated Chromium service
+
+If Chromium profile locking appears during rolling deploys, run Chromium in a separate Railway service.
+
+This repo includes:
+- `services/chromium/Dockerfile`
+- `services/chromium/start.sh`
+- `services/chromium/railway.toml`
+
+Suggested setup:
+1. Create a second Railway service in the same project/environment (for monorepos, set root dir to `/services/chromium`).
+2. For that service, set `RAILWAY_DOCKERFILE_PATH=services/chromium/Dockerfile`.
+3. Mount a volume at `/data` on the Chromium service for persistent browser profile state.
+4. Set Chromium service `PORT=18800` and healthcheck path to `/json/version`.
+5. In the OpenClaw service, set:
+   - `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL=http://<chromium-service-name>.railway.internal:18800`
+
+When `OPENCLAW_EXTERNAL_CHROMIUM_CDP_URL` is set, the wrapper skips local Chromium startup and uses the external CDP endpoint.
+
+Official Railway references:
+- Private networking (`<service>.railway.internal`): <https://docs.railway.com/guides/private-networking>
+- How internal DNS works: <https://docs.railway.com/networking/private-networking/how-it-works>
+- Custom Dockerfile path (`RAILWAY_DOCKERFILE_PATH`): <https://docs.railway.com/builds/dockerfiles>
+- Monorepo service root directories: <https://docs.railway.com/tutorials/deploying-a-monorepo>
 
 ### “disconnected (1008): pairing required” / dashboard health offline
 
