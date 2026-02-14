@@ -1,6 +1,7 @@
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -90,6 +91,10 @@ process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
 // Where the gateway will listen internally (we proxy to it).
 const INTERNAL_GATEWAY_PORT = Number.parseInt(process.env.INTERNAL_GATEWAY_PORT ?? "18789", 10);
 const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
+const GATEWAY_READY_TIMEOUT_MS = Number.parseInt(
+  process.env.GATEWAY_READY_TIMEOUT_MS ?? "120000",
+  10,
+);
 const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 
 // Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
@@ -147,9 +152,28 @@ function sleep(ms) {
 }
 
 async function waitForGatewayReady(opts = {}) {
-  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? GATEWAY_READY_TIMEOUT_MS;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    // First, check if the gateway TCP port is accepting connections.
+    // Some OpenClaw builds expose ws:// before HTTP routes are fully ready.
+    const tcpReady = await new Promise((resolve) => {
+      const socket = net.connect(
+        { host: INTERNAL_GATEWAY_HOST, port: INTERNAL_GATEWAY_PORT },
+        () => {
+          socket.destroy();
+          resolve(true);
+        },
+      );
+      socket.setTimeout(750);
+      socket.on("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.on("error", () => resolve(false));
+    });
+    if (tcpReady) return true;
+
     try {
       // Try the default Control UI base path, then fall back to legacy or root.
       const paths = ["/openclaw", "/clawdbot", "/"]; 
@@ -237,7 +261,7 @@ async function ensureGatewayRunning() {
       try {
         lastGatewayError = null;
         await startGateway();
-        const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+        const ready = await waitForGatewayReady({ timeoutMs: GATEWAY_READY_TIMEOUT_MS });
         if (!ready) {
           throw new Error("Gateway did not become ready in time");
         }
