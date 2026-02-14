@@ -5,6 +5,7 @@ RUN apt-get update \
     chromium \
     chromium-sandbox \
     ca-certificates \
+    socat \
   && rm -rf /var/lib/apt/lists/*
 
 COPY services/chromium/start.sh /usr/local/bin/start-chromium.sh

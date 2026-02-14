@@ -2,8 +2,7 @@
 set -euo pipefail
 
 : "${PORT:=18800}"
-: "${CHROMIUM_CDP_HOST:=0.0.0.0}"
-: "${CHROMIUM_CDP_PORT:=${PORT}}"
+: "${CHROMIUM_CDP_PORT_INTERNAL:=18801}"
 : "${CHROMIUM_BIN:=chromium}"
 : "${CHROMIUM_USER_DATA_DIR:=/data/chromium-user-data}"
 : "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process}"
@@ -26,19 +25,25 @@ read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
 
 "${CHROMIUM_BIN}" \
   "${chromium_args[@]}" \
-  --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
-  --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
+  --remote-debugging-address="127.0.0.1" \
+  --remote-debugging-port="${CHROMIUM_CDP_PORT_INTERNAL}" \
   --remote-allow-origins="*" \
   --user-data-dir="${CHROMIUM_USER_DATA_DIR}" \
   about:blank &
 
 chromium_pid=$!
 
-echo "[chromium] pid=${chromium_pid} cdp=http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
+# Chromium often binds its CDP server to loopback even when told otherwise.
+# Railway healthchecks need the port to be reachable from outside the container, so we
+# proxy the public PORT -> loopback CDP port.
+socat TCP-LISTEN:${PORT},fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:${CHROMIUM_CDP_PORT_INTERNAL} &
+socat_pid=$!
+
+echo "[chromium] pid=${chromium_pid} cdp_internal=http://127.0.0.1:${CHROMIUM_CDP_PORT_INTERNAL} proxy_port=${PORT} (socat pid=${socat_pid})"
 
 ready=0
 for _ in $(seq 1 "${CHROMIUM_CDP_READY_TIMEOUT_S}"); do
-  if curl -fsS "http://127.0.0.1:${CHROMIUM_CDP_PORT}/json/version" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${CHROMIUM_CDP_PORT_INTERNAL}/json/version" >/dev/null 2>&1; then
     ready=1
     break
   fi
