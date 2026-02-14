@@ -69,6 +69,9 @@ ENV PATH="/root/.local/bin:/root/go/bin:/usr/local/go/bin:${PATH}"
 RUN pipx install poetry \
   && pipx install uv
 
+# Optional heavy tools (keep CI + default template builds reasonable)
+ARG INSTALL_OPENAI_WHISPER=0
+
 # Install OpenClaw skill CLIs via Linux-native package managers
 RUN set -eux; \
     ARCH="$(dpkg --print-architecture)"; \
@@ -93,7 +96,7 @@ RUN set -eux; \
       | tar -xz -C /usr/local/bin himalaya; \
     npm install -g @steipete/summarize; \
     uv tool install nano-pdf; \
-    uv tool install openai-whisper
+    if [ "${INSTALL_OPENAI_WHISPER}" = "1" ]; then uv tool install openai-whisper; fi
 
 # Verify key CLIs are available
 RUN command -v gh \
@@ -105,8 +108,7 @@ RUN command -v gh \
   && command -v notesmd-cli \
   && command -v himalaya \
   && command -v nano-pdf \
-  && command -v whisper \
-  && whisper --help >/dev/null
+  && if [ "${INSTALL_OPENAI_WHISPER}" = "1" ]; then command -v whisper && whisper --help >/dev/null; fi
 
 RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
