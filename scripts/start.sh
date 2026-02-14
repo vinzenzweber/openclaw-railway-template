@@ -17,7 +17,7 @@ fi
 : "${CHROMIUM_CDP_HOST:=127.0.0.1}"
 : "${CHROMIUM_CDP_PORT:=18800}"
 : "${CHROMIUM_BIN:=chromium}"
-: "${CHROMIUM_USER_DATA_DIR:=/data/chromium-user-data}"
+: "${CHROMIUM_USER_DATA_DIR:=/tmp/chromium-data}"
 : "${CHROMIUM_FLAGS:=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process}"
 export CHROMIUM_CDP_URL="http://${CHROMIUM_CDP_HOST}:${CHROMIUM_CDP_PORT}"
 
@@ -32,21 +32,45 @@ fi
 # Split configured flags into args safely.
 read -r -a chromium_args <<< "${CHROMIUM_FLAGS}"
 
-"${CHROMIUM_BIN}" \
-  "${chromium_args[@]}" \
-  --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
-  --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
-  --user-data-dir="${CHROMIUM_USER_DATA_DIR}" \
-  about:blank >/tmp/chromium.log 2>&1 &
-chromium_pid=$!
+start_chromium() {
+  local user_data_dir="$1"
+  mkdir -p "${user_data_dir}"
+  chmod 700 "${user_data_dir}"
+  rm -f \
+    "${user_data_dir}/SingletonLock" \
+    "${user_data_dir}/SingletonCookie" \
+    "${user_data_dir}/SingletonSocket"
 
-for _ in $(seq 1 30); do
-  if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
-    break
+  "${CHROMIUM_BIN}" \
+    "${chromium_args[@]}" \
+    --remote-debugging-address="${CHROMIUM_CDP_HOST}" \
+    --remote-debugging-port="${CHROMIUM_CDP_PORT}" \
+    --user-data-dir="${user_data_dir}" \
+    about:blank >/tmp/chromium.log 2>&1 &
+  chromium_pid=$!
+}
+
+wait_for_cdp() {
+  for _ in $(seq 1 30); do
+    if curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_chromium "${CHROMIUM_USER_DATA_DIR}"
+if ! wait_for_cdp; then
+  if grep -qi "profile appears to be in use" /tmp/chromium.log 2>/dev/null; then
+    kill -TERM "${chromium_pid:-}" 2>/dev/null || true
+    wait "${chromium_pid:-}" 2>/dev/null || true
+    CHROMIUM_USER_DATA_DIR="/tmp/chromium-data-ephemeral-$$"
+    start_chromium "${CHROMIUM_USER_DATA_DIR}"
   fi
-  sleep 1
-done
-if ! curl -fsS "${CHROMIUM_CDP_URL}/json/version" >/dev/null 2>&1; then
+fi
+
+if ! wait_for_cdp; then
   echo "Chromium CDP failed to start. Last log output:" >&2
   tail -n 50 /tmp/chromium.log >&2 || true
   exit 1
