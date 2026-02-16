@@ -20,9 +20,7 @@ RUN if [ ! -x /usr/bin/chromium ]; then \
     fi
 
 # Install OpenClaw (official npm distribution)
-# Pin this to a specific version in Railway via build arg if you want deterministic builds.
-ARG OPENCLAW_NPM_VERSION=latest
-RUN npm install -g "openclaw@${OPENCLAW_NPM_VERSION}" \
+RUN npm install -g "openclaw@latest" \
   && openclaw --version
 
 # OpenClaw's browser-control service uses Playwright on top of CDP. We only need the
