@@ -46,7 +46,8 @@
       advancedToggle.style.display = 'block';
       advancedToggle.style.marginTop = '0.5rem';
       advancedToggle.innerHTML = '<input type="checkbox" id="showAdvancedAuth" /> Show interactive OAuth options (advanced)';
-      authGroupEl.parentNode.insertBefore(advancedToggle, authChoiceEl.parentNode);
+      // Insert before authChoiceEl (not its parentNode) to avoid DOM error
+      authGroupEl.parentNode.insertBefore(advancedToggle, authChoiceEl);
     }
 
     for (var i = 0; i < groups.length; i++) {
@@ -118,8 +119,6 @@
         statusDetailsEl.textContent = parts.join('\n');
       }
 
-      renderAuth(j.authGroups || []);
-
       // If channels are unsupported, surface it for debugging.
       if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
         logEl.textContent += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
@@ -133,6 +132,20 @@
     }).catch(function (e) {
       setStatus('Error: ' + String(e));
       if (statusDetailsEl) statusDetailsEl.textContent = '';
+    });
+  }
+
+  // Fast auth group load (no subprocesses). Keeps selects from appearing empty.
+  function loadAuthGroupsFast() {
+    return httpJson('/setup/api/auth-groups').then(function (j) {
+      if (j && j.authGroups && j.authGroups.length > 0) {
+        renderAuth(j.authGroups);
+        return;
+      }
+      throw new Error('Missing authGroups from /setup/api/auth-groups');
+    }).catch(function (e) {
+      console.warn('[setup] authGroups load failed:', e);
+      renderAuth([]);
     });
   }
 
@@ -350,5 +363,9 @@
       .catch(function (e) { logEl.textContent += 'Error: ' + String(e) + '\n'; });
   };
 
+  // Populate provider/auth selects ASAP (fast endpoint, no subprocesses)
+  loadAuthGroupsFast();
+
+  // Load the rest of status (version/help) in parallel
   refreshStatus();
 })();
